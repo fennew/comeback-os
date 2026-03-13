@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { executeAgent } from "@/lib/agents/engine";
+import { getOrCreateOrganization } from "@/lib/supabase/get-organization";
 
 export async function POST(request: NextRequest) {
   const supabase = await createServerClient();
@@ -21,18 +22,14 @@ export async function POST(request: NextRequest) {
     return new Response("Missing agentSlug or message", { status: 400 });
   }
 
-  // Get user's organization
-  const { data: membership } = await supabase
-    .from("organization_members")
-    .select("organization_id")
-    .eq("user_id", user.id)
-    .single();
+  // Get or auto-create user's organization
+  const org = await getOrCreateOrganization(supabase, user.id, user.email || undefined);
 
-  if (!membership) {
-    return new Response("No organization found", { status: 403 });
+  if (!org) {
+    return new Response("Failed to create organization", { status: 500 });
   }
 
-  const organizationId = membership.organization_id;
+  const organizationId = org.organizationId;
   const adminDb = createAdminClient();
 
   // Get or create conversation

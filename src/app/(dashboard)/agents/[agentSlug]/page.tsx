@@ -7,15 +7,23 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, ListTodo, Wrench, Bot } from "lucide-react";
+import { Send, ListTodo, Wrench, Bot, Paperclip, X, FileText, Image as ImageIcon } from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useClientContext } from "@/providers/client-context-provider";
+
+interface UploadedFile {
+  name: string;
+  type: string;
+  size: number;
+  url: string;
+}
 
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
+  files?: UploadedFile[];
   toolCalls?: Array<{ id: string; name: string; input: Record<string, unknown> }>;
   toolResults?: Array<{ tool_call_id: string; content: string }>;
   timestamp: Date;
@@ -31,6 +39,9 @@ export default function AgentPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [streamingContent, setStreamingContent] = useState("");
+  const [attachedFiles, setAttachedFiles] = useState<UploadedFile[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = useCallback(() => {
@@ -58,19 +69,68 @@ export default function AgentPage() {
     );
   }
 
+  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsUploading(true);
+    try {
+      for (const file of Array.from(files)) {
+        const formData = new FormData();
+        formData.append("file", file);
+
+        const res = await fetch("/api/upload", { method: "POST", body: formData });
+        if (!res.ok) {
+          const err = await res.json();
+          console.error("Upload failed:", err.error);
+          continue;
+        }
+        const uploaded = await res.json();
+        setAttachedFiles((prev) => [...prev, uploaded]);
+      }
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  function removeFile(index: number) {
+    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function getFileIcon(type: string) {
+    if (type.startsWith("image/")) return ImageIcon;
+    return FileText;
+  }
+
   async function handleSend() {
-    if (!input.trim() || isLoading) return;
+    if ((!input.trim() && attachedFiles.length === 0) || isLoading) return;
+
+    // Build message with file context
+    let messageContent = input.trim();
+    const currentFiles = [...attachedFiles];
+
+    if (currentFiles.length > 0) {
+      const fileList = currentFiles
+        .map((f) => `[Attached file: ${f.name} (${f.type}, ${(f.size / 1024).toFixed(1)}KB) - ${f.url}]`)
+        .join("\n");
+      messageContent = messageContent
+        ? `${messageContent}\n\n${fileList}`
+        : fileList;
+    }
 
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: "user",
-      content: input.trim(),
+      content: input.trim() || "Uploaded file(s)",
+      files: currentFiles.length > 0 ? currentFiles : undefined,
       timestamp: new Date(),
     };
 
     setMessages((prev) => [...prev, userMessage]);
-    const messageText = input.trim();
+    const messageText = messageContent;
     setInput("");
+    setAttachedFiles([]);
     setIsLoading(true);
     setStreamingContent("");
 
@@ -279,6 +339,19 @@ export default function AgentPage() {
                     )}
                   >
                     <p className="whitespace-pre-wrap">{msg.content}</p>
+                    {msg.files && msg.files.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {msg.files.map((f, i) => {
+                          const Icon = getFileIcon(f.type);
+                          return (
+                            <span key={i} className="inline-flex items-center gap-1 rounded bg-black/10 px-2 py-0.5 text-xs">
+                              <Icon className="h-3 w-3" />
+                              {f.name}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -317,7 +390,41 @@ export default function AgentPage() {
 
       {/* Input area */}
       <div className="border-t border-border pt-4">
+        {/* Attached files preview */}
+        {attachedFiles.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {attachedFiles.map((f, i) => {
+              const Icon = getFileIcon(f.type);
+              return (
+                <div key={i} className="flex items-center gap-1.5 rounded-md bg-muted px-2.5 py-1.5 text-xs">
+                  <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="max-w-[150px] truncate">{f.name}</span>
+                  <button onClick={() => removeFile(i)} className="ml-1 rounded-full hover:bg-background p-0.5">
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
         <div className="flex gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            onChange={handleFileSelect}
+            className="hidden"
+            accept=".pdf,.doc,.docx,.txt,.csv,.xlsx,.xls,.png,.jpg,.jpeg,.gif,.webp,.json,.html,.css,.md"
+          />
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+            title="Attach file"
+          >
+            <Paperclip className="h-4 w-4" />
+          </Button>
           <Textarea
             placeholder={`Message ${agent.shortName}...`}
             value={input}
@@ -326,7 +433,11 @@ export default function AgentPage() {
             rows={1}
             className="min-h-[44px] max-h-[120px] resize-none"
           />
-          <Button onClick={handleSend} disabled={!input.trim() || isLoading} size="icon">
+          <Button
+            onClick={handleSend}
+            disabled={(!input.trim() && attachedFiles.length === 0) || isLoading}
+            size="icon"
+          >
             <Send className="h-4 w-4" />
           </Button>
         </div>

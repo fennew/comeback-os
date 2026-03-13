@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getOrCreateOrganization } from "@/lib/supabase/get-organization";
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -47,16 +48,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Get user's organization
-  const { data: membership } = await supabase
-    .from("organization_members")
-    .select("organization_id")
-    .eq("user_id", user.id)
-    .single();
+  // Get or auto-create user's organization
+  const org = await getOrCreateOrganization(supabase, user.id, user.email || undefined);
 
-  if (!membership) {
-    return NextResponse.json({ error: "No organization found" }, { status: 400 });
+  if (!org) {
+    return NextResponse.json({ error: "Failed to create organization" }, { status: 500 });
   }
+
+  const membership = { organization_id: org.organizationId };
 
   const body = await request.json();
 
