@@ -3,11 +3,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getAgent } from "./registry";
 import { getToolDefinitions, executeTool } from "./tools";
 import { getAgentPrompt } from "./prompts";
+import { resolveProvider, streamAnthropic, streamXAI } from "./providers";
 import type { AgentContext, StreamEvent } from "./types";
-
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
 
 interface EngineOptions {
   agentSlug: string;
@@ -68,50 +65,15 @@ export async function* executeAgent(
     .order("created_at", { ascending: true })
     .limit(50);
 
-  // Build messages array for Claude
-  const messages: Anthropic.MessageParam[] = [];
+  // Resolve which provider + model to use
+  const modelString = agentConfig?.model || agent.defaultModel;
+  const { provider, model } = resolveProvider(modelString);
+  const maxTokens = agentConfig?.max_tokens || 4096;
 
-  if (existingMessages) {
-    for (const msg of existingMessages) {
-      if (msg.role === "user") {
-        messages.push({ role: "user", content: msg.content || "" });
-      } else if (msg.role === "assistant") {
-        if (msg.tool_calls) {
-          const content: Array<Anthropic.TextBlockParam | Anthropic.ToolUseBlockParam> = [];
-          if (msg.content) {
-            content.push({ type: "text", text: msg.content });
-          }
-          const toolCalls = msg.tool_calls as Array<{ id: string; name: string; input: Record<string, unknown> }>;
-          for (const tc of toolCalls) {
-            content.push({
-              type: "tool_use",
-              id: tc.id,
-              name: tc.name,
-              input: tc.input,
-            });
-          }
-          messages.push({ role: "assistant", content });
-        } else {
-          messages.push({ role: "assistant", content: msg.content || "" });
-        }
-      } else if (msg.role === "tool") {
-        messages.push({
-          role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: msg.tool_call_id || "",
-              content: msg.content || "",
-            },
-          ],
-        });
-      }
-    }
-  }
+  // Get tool definitions
+  const tools = getToolDefinitions(agent.tools);
 
   // Add new user message
-  messages.push({ role: "user", content: userMessage });
-
   // Save user message to DB
   await supabase.from("messages").insert({
     conversation_id: context.conversationId,
@@ -119,146 +81,239 @@ export async function* executeAgent(
     content: userMessage,
   });
 
-  // Get tool definitions
-  const tools = getToolDefinitions(agent.tools);
-  const toolsParam: Anthropic.Tool[] = tools.map((t) => ({
-    name: t.name,
-    description: t.description,
-    input_schema: t.input_schema as Anthropic.Tool.InputSchema,
-  }));
+  // ── Anthropic path ────────────────────────────────────
+  if (provider === "anthropic") {
+    yield* runAnthropic({
+      model,
+      maxTokens,
+      systemPrompt,
+      existingMessages: existingMessages || [],
+      userMessage,
+      tools,
+      agentSlug,
+      context,
+      supabase,
+    });
+  }
+  // ── xAI (Grok) path ──────────────────────────────────
+  else if (provider === "xai") {
+    yield* runXAI({
+      model,
+      maxTokens,
+      systemPrompt,
+      existingMessages: existingMessages || [],
+      userMessage,
+      tools,
+      agentSlug,
+      context,
+      supabase,
+    });
+  } else {
+    yield { type: "error", error: `Unknown provider: ${provider}` };
+    return;
+  }
 
-  // Model config
-  const model = agentConfig?.model || agent.defaultModel;
-  const maxTokens = agentConfig?.max_tokens || 4096;
+  yield { type: "done" };
+}
 
-  // Run agent loop (handles tool use automatically)
+// ── Anthropic runner ────────────────────────────────────────
+async function* runAnthropic(opts: {
+  model: string;
+  maxTokens: number;
+  systemPrompt: string;
+  existingMessages: Array<{ role: string; content: string | null; tool_calls: unknown; tool_call_id: string | null }>;
+  userMessage: string;
+  tools: Array<{ name: string; description: string; input_schema: Record<string, unknown> }>;
+  agentSlug: string;
+  context: AgentContext;
+  supabase: ReturnType<typeof createAdminClient>;
+}): AsyncGenerator<StreamEvent> {
+  // Build Anthropic messages array
+  const messages: Anthropic.MessageParam[] = [];
+
+  for (const msg of opts.existingMessages) {
+    if (msg.role === "user") {
+      messages.push({ role: "user", content: msg.content || "" });
+    } else if (msg.role === "assistant") {
+      if (msg.tool_calls) {
+        const content: Array<Anthropic.TextBlockParam | Anthropic.ToolUseBlockParam> = [];
+        if (msg.content) content.push({ type: "text", text: msg.content });
+        const tcs = msg.tool_calls as Array<{ id: string; name: string; input: Record<string, unknown> }>;
+        for (const tc of tcs) {
+          content.push({ type: "tool_use", id: tc.id, name: tc.name, input: tc.input });
+        }
+        messages.push({ role: "assistant", content });
+      } else {
+        messages.push({ role: "assistant", content: msg.content || "" });
+      }
+    } else if (msg.role === "tool") {
+      messages.push({
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: msg.tool_call_id || "", content: msg.content || "" }],
+      });
+    }
+  }
+
+  messages.push({ role: "user", content: opts.userMessage });
+
   let continueLoop = true;
-
   while (continueLoop) {
     continueLoop = false;
 
-    const stream = anthropic.messages.stream({
-      model,
-      max_tokens: maxTokens,
-      system: systemPrompt,
-      messages,
-      tools: toolsParam.length > 0 ? toolsParam : undefined,
-    });
-
     let fullText = "";
-    const toolCalls: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
-    let currentToolInput = "";
-    let currentToolName = "";
-    let currentToolId = "";
+    let toolCalls: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
 
-    for await (const event of stream) {
-      if (event.type === "content_block_start") {
-        if (event.content_block.type === "text") {
-          // text block starting
-        } else if (event.content_block.type === "tool_use") {
-          currentToolId = event.content_block.id;
-          currentToolName = event.content_block.name;
-          currentToolInput = "";
-          yield {
-            type: "tool_use",
-            tool_call: {
-              id: currentToolId,
-              name: currentToolName,
-              input: {},
-            },
-          };
-        }
-      } else if (event.type === "content_block_delta") {
-        if (event.delta.type === "text_delta") {
-          fullText += event.delta.text;
-          yield { type: "text", content: event.delta.text };
-        } else if (event.delta.type === "input_json_delta") {
-          currentToolInput += event.delta.partial_json;
-        }
-      } else if (event.type === "content_block_stop") {
-        if (currentToolName) {
-          let parsedInput = {};
-          try {
-            parsedInput = currentToolInput ? JSON.parse(currentToolInput) : {};
-          } catch {
-            // empty input
-          }
-          toolCalls.push({
-            id: currentToolId,
-            name: currentToolName,
-            input: parsedInput,
-          });
-          currentToolName = "";
-          currentToolId = "";
-          currentToolInput = "";
-        }
+    for await (const event of streamAnthropic({
+      model: opts.model,
+      systemPrompt: opts.systemPrompt,
+      messages,
+      tools: opts.tools,
+      maxTokens: opts.maxTokens,
+    })) {
+      if (event.type === "text" && event.text) {
+        yield { type: "text", content: event.text };
+      }
+      if (event.type === "tool_calls_done") {
+        fullText = event.fullText || "";
+        toolCalls = event.toolCalls || [];
       }
     }
 
     // Save assistant message
-    await supabase.from("messages").insert({
-      conversation_id: context.conversationId,
+    await opts.supabase.from("messages").insert({
+      conversation_id: opts.context.conversationId,
       role: "assistant",
       content: fullText || null,
       tool_calls: toolCalls.length > 0 ? toolCalls : null,
     });
 
-    // If there were tool calls, execute them and continue the loop
+    // Tool call handling
     if (toolCalls.length > 0) {
-      // Build assistant content for next turn
-      const assistantContent: Array<Anthropic.TextBlockParam | Anthropic.ToolUseBlockParam> = [];
-      if (fullText) {
-        assistantContent.push({ type: "text", text: fullText });
-      }
       for (const tc of toolCalls) {
-        assistantContent.push({
-          type: "tool_use",
-          id: tc.id,
-          name: tc.name,
-          input: tc.input,
-        });
+        yield { type: "tool_use", tool_call: { id: tc.id, name: tc.name, input: tc.input } };
+      }
+
+      const assistantContent: Array<Anthropic.TextBlockParam | Anthropic.ToolUseBlockParam> = [];
+      if (fullText) assistantContent.push({ type: "text", text: fullText });
+      for (const tc of toolCalls) {
+        assistantContent.push({ type: "tool_use", id: tc.id, name: tc.name, input: tc.input });
       }
       messages.push({ role: "assistant", content: assistantContent });
 
-      // Execute each tool and collect results
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
-
       for (const tc of toolCalls) {
-        // Override from_agent_slug for handoffs
-        if (tc.name === "send_handoff") {
-          tc.input.from_agent = agentSlug;
-        }
-
-        const result = await executeTool(tc.name, tc.input, context);
+        if (tc.name === "send_handoff") tc.input.from_agent = opts.agentSlug;
+        const result = await executeTool(tc.name, tc.input, opts.context);
         const resultStr = JSON.stringify(result);
-
-        // Save tool result message
-        await supabase.from("messages").insert({
-          conversation_id: context.conversationId,
+        await opts.supabase.from("messages").insert({
+          conversation_id: opts.context.conversationId,
           role: "tool",
           content: resultStr,
           tool_call_id: tc.id,
         });
-
-        yield {
-          type: "tool_result",
-          tool_result: { tool_call_id: tc.id, content: resultStr },
-        };
-
-        toolResults.push({
-          type: "tool_result",
-          tool_use_id: tc.id,
-          content: resultStr,
-        });
+        yield { type: "tool_result", tool_result: { tool_call_id: tc.id, content: resultStr } };
+        toolResults.push({ type: "tool_result", tool_use_id: tc.id, content: resultStr });
       }
 
       messages.push({ role: "user", content: toolResults });
-
-      // Reset for next iteration
-      fullText = "";
       continueLoop = true;
     }
   }
+}
 
-  yield { type: "done" };
+// ── xAI (Grok) runner ───────────────────────────────────────
+async function* runXAI(opts: {
+  model: string;
+  maxTokens: number;
+  systemPrompt: string;
+  existingMessages: Array<{ role: string; content: string | null; tool_calls: unknown; tool_call_id: string | null }>;
+  userMessage: string;
+  tools: Array<{ name: string; description: string; input_schema: Record<string, unknown> }>;
+  agentSlug: string;
+  context: AgentContext;
+  supabase: ReturnType<typeof createAdminClient>;
+}): AsyncGenerator<StreamEvent> {
+  // Build OpenAI-compatible messages
+  const messages: Array<{ role: string; content: string; tool_calls?: unknown[]; tool_call_id?: string }> = [];
+
+  for (const msg of opts.existingMessages) {
+    if (msg.role === "user") {
+      messages.push({ role: "user", content: msg.content || "" });
+    } else if (msg.role === "assistant") {
+      messages.push({
+        role: "assistant",
+        content: msg.content || "",
+        tool_calls: msg.tool_calls ? (msg.tool_calls as unknown[]) : undefined,
+      });
+    } else if (msg.role === "tool") {
+      messages.push({
+        role: "tool",
+        content: msg.content || "",
+        tool_call_id: msg.tool_call_id || undefined,
+      });
+    }
+  }
+
+  messages.push({ role: "user", content: opts.userMessage });
+
+  let continueLoop = true;
+  while (continueLoop) {
+    continueLoop = false;
+
+    let fullText = "";
+    let toolCalls: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
+
+    for await (const event of streamXAI({
+      model: opts.model,
+      systemPrompt: opts.systemPrompt,
+      messages,
+      tools: opts.tools,
+      maxTokens: opts.maxTokens,
+    })) {
+      if (event.type === "text" && event.text) {
+        yield { type: "text", content: event.text };
+      }
+      if (event.type === "tool_calls_done") {
+        fullText = event.fullText || "";
+        toolCalls = event.toolCalls || [];
+      }
+    }
+
+    // Save assistant message
+    await opts.supabase.from("messages").insert({
+      conversation_id: opts.context.conversationId,
+      role: "assistant",
+      content: fullText || null,
+      tool_calls: toolCalls.length > 0 ? toolCalls : null,
+    });
+
+    // Tool call handling
+    if (toolCalls.length > 0) {
+      for (const tc of toolCalls) {
+        yield { type: "tool_use", tool_call: { id: tc.id, name: tc.name, input: tc.input } };
+      }
+
+      messages.push({
+        role: "assistant",
+        content: fullText || "",
+        tool_calls: toolCalls,
+      });
+
+      for (const tc of toolCalls) {
+        if (tc.name === "send_handoff") tc.input.from_agent = opts.agentSlug;
+        const result = await executeTool(tc.name, tc.input, opts.context);
+        const resultStr = JSON.stringify(result);
+        await opts.supabase.from("messages").insert({
+          conversation_id: opts.context.conversationId,
+          role: "tool",
+          content: resultStr,
+          tool_call_id: tc.id,
+        });
+        yield { type: "tool_result", tool_result: { tool_call_id: tc.id, content: resultStr } };
+        messages.push({ role: "tool", content: resultStr, tool_call_id: tc.id });
+      }
+
+      continueLoop = true;
+    }
+  }
 }
