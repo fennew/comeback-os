@@ -53,7 +53,33 @@ export async function* executeAgent(
 - Brand Voice: ${client.brand_voice || "Not specified"}
 - Brand Colors: ${client.brand_colors || "Not specified"}
 - Monthly Retainer: ${client.monthly_retainer ? `$${client.monthly_retainer}` : "Not specified"}
+- Contract Period: ${client.contract_start || "N/A"} to ${client.contract_end || "N/A"}
+- Status: ${client.status || "active"}
 - Notes: ${client.notes || "None"}`;
+
+      // Load brand assets for this client
+      const { data: assets } = await supabase
+        .from("client_assets")
+        .select("name, file_type, url, category")
+        .eq("client_id", context.clientId)
+        .order("category");
+
+      if (assets && assets.length > 0) {
+        const assetsByCategory: Record<string, Array<{ name: string; url: string; file_type: string }>> = {};
+        for (const a of assets) {
+          if (!assetsByCategory[a.category]) assetsByCategory[a.category] = [];
+          assetsByCategory[a.category].push(a);
+        }
+
+        systemPrompt += `\n\n## Client Brand Assets`;
+        for (const [category, items] of Object.entries(assetsByCategory)) {
+          systemPrompt += `\n### ${category.charAt(0).toUpperCase() + category.slice(1).replace(/-/g, " ")}`;
+          for (const item of items) {
+            systemPrompt += `\n- ${item.name} (${item.file_type}): ${item.url}`;
+          }
+        }
+        systemPrompt += `\n\nUse these brand assets as reference when creating content for this client.`;
+      }
     }
   }
 

@@ -80,3 +80,73 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json(data, { status: 201 });
 }
+
+export async function PATCH(request: NextRequest) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const body = await request.json();
+  const { id, ...updates } = body;
+
+  if (!id) {
+    return NextResponse.json({ error: "Missing client id" }, { status: 400 });
+  }
+
+  // Only allow updating known fields
+  const allowedFields = [
+    "name", "industry", "website", "brand_voice", "brand_colors",
+    "notes", "monthly_retainer", "logo_url", "status",
+    "contract_start", "contract_end",
+  ];
+
+  const cleanUpdates: Record<string, unknown> = {};
+  for (const key of allowedFields) {
+    if (key in updates) {
+      cleanUpdates[key] = updates[key];
+    }
+  }
+
+  const { data, error } = await supabase
+    .from("clients")
+    .update(cleanUpdates)
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json(data);
+}
+
+export async function DELETE(request: NextRequest) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get("id");
+
+  if (!id) {
+    return NextResponse.json({ error: "Missing client id" }, { status: 400 });
+  }
+
+  const { error } = await supabase
+    .from("clients")
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ success: true });
+}
