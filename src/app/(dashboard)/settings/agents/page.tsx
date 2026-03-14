@@ -64,6 +64,7 @@ export default function AgentSettingsPage() {
   const allModels = [
     ...AVAILABLE_MODELS.anthropic,
     ...AVAILABLE_MODELS.xai,
+    ...AVAILABLE_MODELS.openai,
   ];
 
   return (
@@ -90,13 +91,18 @@ export default function AgentSettingsPage() {
                 className="rounded-md border border-border bg-background px-3 py-1.5 text-sm"
               >
                 <option value="">Select model...</option>
-                <optgroup label="Anthropic (Claude)">
-                  {AVAILABLE_MODELS.anthropic.map((m) => (
+                <optgroup label="xAI (Grok)">
+                  {AVAILABLE_MODELS.xai.map((m) => (
                     <option key={m.model} value={m.model}>{m.label}</option>
                   ))}
                 </optgroup>
-                <optgroup label="xAI (Grok)">
-                  {AVAILABLE_MODELS.xai.map((m) => (
+                <optgroup label="OpenAI (GPT)">
+                  {AVAILABLE_MODELS.openai.map((m) => (
+                    <option key={m.model} value={m.model}>{m.label}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="Anthropic (Claude)">
+                  {AVAILABLE_MODELS.anthropic.map((m) => (
                     <option key={m.model} value={m.model}>{m.label}</option>
                   ))}
                 </optgroup>
@@ -166,6 +172,7 @@ export default function AgentSettingsPage() {
           <ul className="text-xs text-muted-foreground mt-2 space-y-1">
             <li><code className="bg-muted px-1.5 py-0.5 rounded">ANTHROPIC_API_KEY</code> — for Claude models</li>
             <li><code className="bg-muted px-1.5 py-0.5 rounded">XAI_API_KEY</code> — for Grok models</li>
+            <li><code className="bg-muted px-1.5 py-0.5 rounded">OPENAI_API_KEY</code> — for GPT models</li>
           </ul>
         </CardContent>
       </Card>

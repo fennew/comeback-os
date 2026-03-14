@@ -335,6 +335,11 @@ export default function AgentPage() {
                 <option key={m.model} value={m.model}>{m.label}</option>
               ))}
             </optgroup>
+            <optgroup label="OpenAI (GPT)">
+              {AVAILABLE_MODELS.openai.map((m) => (
+                <option key={m.model} value={m.model}>{m.label}</option>
+              ))}
+            </optgroup>
             <optgroup label="Anthropic (Claude)">
               {AVAILABLE_MODELS.anthropic.map((m) => (
                 <option key={m.model} value={m.model}>{m.label}</option>

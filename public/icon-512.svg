@@ -1,5 +1,25 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="102" fill="#0a0a0a"/>
-  <text x="50%" y="48%" text-anchor="middle" dominant-baseline="middle" font-family="Arial,Helvetica,sans-serif" font-weight="700" font-size="205" fill="#f59e0b">C</text>
-  <text x="50%" y="75%" text-anchor="middle" dominant-baseline="middle" font-family="Arial,Helvetica,sans-serif" font-weight="600" font-size="67" fill="#888">OS</text>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1a2e"/>
+      <stop offset="100%" style="stop-color:#0d0d1a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f59e0b"/>
+      <stop offset="100%" style="stop-color:#d97706"/>
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="512" height="512" rx="110" fill="url(#bg)"/>
+  <!-- Subtle grid lines -->
+  <line x1="0" y1="171" x2="512" y2="171" stroke="#ffffff" stroke-opacity="0.04" stroke-width="1"/>
+  <line x1="0" y1="341" x2="512" y2="341" stroke="#ffffff" stroke-opacity="0.04" stroke-width="1"/>
+  <line x1="171" y1="0" x2="171" y2="512" stroke="#ffffff" stroke-opacity="0.04" stroke-width="1"/>
+  <line x1="341" y1="0" x2="341" y2="512" stroke="#ffffff" stroke-opacity="0.04" stroke-width="1"/>
+  <!-- Amber accent bar top -->
+  <rect x="86" y="74" width="340" height="10" rx="5" fill="url(#accent)" opacity="0.9"/>
+  <!-- OS text -->
+  <text x="256" y="295" text-anchor="middle" dominant-baseline="middle" font-family="Arial,Helvetica,sans-serif" font-weight="800" font-size="192" fill="url(#accent)" letter-spacing="-6">OS</text>
+  <!-- Comeback label -->
+  <text x="256" y="408" text-anchor="middle" dominant-baseline="middle" font-family="Arial,Helvetica,sans-serif" font-weight="500" font-size="48" fill="#888888" letter-spacing="10">COMEBACK</text>
 </svg>

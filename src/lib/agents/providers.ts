@@ -1,6 +1,6 @@
 /**
- * Multi-provider AI engine — supports Anthropic (Claude) and xAI (Grok)
- * Both use streaming and tool calling.
+ * Multi-provider AI engine — supports Anthropic (Claude), xAI (Grok), and OpenAI (GPT)
+ * All use streaming and tool calling.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -8,7 +8,7 @@ import OpenAI from "openai";
 import type { StreamEvent } from "./types";
 
 // ── Provider types ──────────────────────────────────────────
-export type ProviderName = "anthropic" | "xai";
+export type ProviderName = "anthropic" | "xai" | "openai";
 
 export interface ProviderConfig {
   provider: ProviderName;
@@ -30,6 +30,14 @@ export const AVAILABLE_MODELS: Record<ProviderName, ProviderConfig[]> = {
     { provider: "xai", model: "grok-3-mini-fast", label: "Grok 3 Mini Fast" },
     { provider: "xai", model: "grok-2", label: "Grok 2" },
   ],
+  openai: [
+    { provider: "openai", model: "gpt-4o", label: "GPT-4o" },
+    { provider: "openai", model: "gpt-4o-mini", label: "GPT-4o Mini" },
+    { provider: "openai", model: "gpt-4.1", label: "GPT-4.1" },
+    { provider: "openai", model: "gpt-4.1-mini", label: "GPT-4.1 Mini" },
+    { provider: "openai", model: "gpt-4.1-nano", label: "GPT-4.1 Nano" },
+    { provider: "openai", model: "o3-mini", label: "o3 Mini" },
+  ],
 };
 
 export function getAllModels(): ProviderConfig[] {
@@ -38,17 +46,25 @@ export function getAllModels(): ProviderConfig[] {
 
 // ── Parse model string to determine provider ────────────────
 export function resolveProvider(modelString: string): { provider: ProviderName; model: string } {
-  // Check if it starts with a provider prefix like "xai:" or "anthropic:"
+  // Check if it starts with a provider prefix like "xai:", "anthropic:", or "openai:"
   if (modelString.startsWith("xai:")) {
     return { provider: "xai", model: modelString.slice(4) };
   }
   if (modelString.startsWith("anthropic:")) {
     return { provider: "anthropic", model: modelString.slice(10) };
   }
+  if (modelString.startsWith("openai:")) {
+    return { provider: "openai", model: modelString.slice(7) };
+  }
 
   // Check if the model name matches a known xAI model
   if (modelString.startsWith("grok")) {
     return { provider: "xai", model: modelString };
+  }
+
+  // Check if the model name matches a known OpenAI model
+  if (modelString.startsWith("gpt-") || modelString.startsWith("o3") || modelString.startsWith("o4")) {
+    return { provider: "openai", model: modelString };
   }
 
   // Default to Anthropic
@@ -140,6 +156,106 @@ export async function* streamAnthropic(opts: {
   yield { type: "tool_calls_done", fullText, toolCalls };
 }
 
+// ── OpenAI (GPT) streaming ───────────────────────────────────
+export async function* streamOpenAI(opts: {
+  model: string;
+  systemPrompt: string;
+  messages: Array<{ role: string; content: string; tool_calls?: unknown[]; tool_call_id?: string }>;
+  tools: ToolDef[];
+  maxTokens: number;
+}): AsyncGenerator<{
+  type: "text" | "tool_calls_done";
+  text?: string;
+  fullText?: string;
+  toolCalls?: Array<{ id: string; name: string; input: Record<string, unknown> }>;
+}> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing OpenAI API key. Set OPENAI_API_KEY in your environment variables.");
+  }
+  const client = new OpenAI({ apiKey });
+
+  // Build OpenAI-format messages
+  const openaiMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    { role: "system", content: opts.systemPrompt },
+  ];
+
+  for (const msg of opts.messages) {
+    if (msg.role === "user") {
+      openaiMessages.push({ role: "user", content: msg.content });
+    } else if (msg.role === "assistant") {
+      if (msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+        openaiMessages.push({
+          role: "assistant",
+          content: msg.content || null,
+          tool_calls: (msg.tool_calls as Array<{ id: string; name: string; input: Record<string, unknown> }>).map((tc) => ({
+            id: tc.id,
+            type: "function" as const,
+            function: { name: tc.name, arguments: JSON.stringify(tc.input) },
+          })),
+        });
+      } else {
+        openaiMessages.push({ role: "assistant", content: msg.content });
+      }
+    } else if (msg.role === "tool") {
+      openaiMessages.push({
+        role: "tool",
+        tool_call_id: msg.tool_call_id || "",
+        content: msg.content,
+      });
+    }
+  }
+
+  const openaiTools = opts.tools.length > 0 ? toolsToOpenAI(opts.tools) : undefined;
+
+  const stream = await client.chat.completions.create({
+    model: opts.model,
+    max_tokens: opts.maxTokens,
+    messages: openaiMessages,
+    tools: openaiTools,
+    stream: true,
+  });
+
+  let fullText = "";
+  const toolCalls: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
+  const toolCallBuffers: Map<number, { id: string; name: string; args: string }> = new Map();
+
+  for await (const chunk of stream) {
+    const delta = chunk.choices?.[0]?.delta;
+    if (!delta) continue;
+
+    if (delta.content) {
+      fullText += delta.content;
+      yield { type: "text", text: delta.content };
+    }
+
+    if (delta.tool_calls) {
+      for (const tc of delta.tool_calls) {
+        const idx = tc.index;
+        if (!toolCallBuffers.has(idx)) {
+          toolCallBuffers.set(idx, { id: tc.id || "", name: tc.function?.name || "", args: "" });
+        }
+        const buf = toolCallBuffers.get(idx)!;
+        if (tc.id) buf.id = tc.id;
+        if (tc.function?.name) buf.name = tc.function.name;
+        if (tc.function?.arguments) buf.args += tc.function.arguments;
+      }
+    }
+  }
+
+  for (const buf of toolCallBuffers.values()) {
+    let parsedInput = {};
+    try {
+      parsedInput = buf.args ? JSON.parse(buf.args) : {};
+    } catch {
+      // empty
+    }
+    toolCalls.push({ id: buf.id, name: buf.name, input: parsedInput });
+  }
+
+  yield { type: "tool_calls_done", fullText, toolCalls };
+}
+
 // ── xAI / OpenAI-compatible streaming ───────────────────────
 export async function* streamXAI(opts: {
   model: string;
@@ -153,8 +269,12 @@ export async function* streamXAI(opts: {
   fullText?: string;
   toolCalls?: Array<{ id: string; name: string; input: Record<string, unknown> }>;
 }> {
+  const apiKey = process.env.XAI_API_KEY || process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing xAI API key. Set XAI_API_KEY in your environment variables.");
+  }
   const client = new OpenAI({
-    apiKey: process.env.XAI_API_KEY,
+    apiKey,
     baseURL: "https://api.x.ai/v1",
   });
 
