@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { agentSlug, message, clientId, conversationId } = body;
+  const { agentSlug, message, clientId, conversationId, model } = body;
 
   if (!agentSlug || !message) {
     return new Response("Missing agentSlug or message", { status: 400 });
@@ -76,6 +76,7 @@ export async function POST(request: NextRequest) {
             userId: user.id,
           },
           userMessage: message,
+          modelOverride: model || undefined,
         });
 
         for await (const event of agentStream) {

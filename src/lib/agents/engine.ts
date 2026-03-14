@@ -11,6 +11,7 @@ interface EngineOptions {
   context: AgentContext;
   userMessage: string;
   systemPromptOverride?: string;
+  modelOverride?: string;
 }
 
 export async function* executeAgent(
@@ -91,8 +92,8 @@ export async function* executeAgent(
     .order("created_at", { ascending: true })
     .limit(50);
 
-  // Resolve which provider + model to use
-  const modelString = agentConfig?.model || agent.defaultModel;
+  // Resolve which provider + model to use (per-chat override > DB config > registry default)
+  const modelString = options.modelOverride || agentConfig?.model || agent.defaultModel;
   const { provider, model } = resolveProvider(modelString);
   const maxTokens = agentConfig?.max_tokens || 4096;
 

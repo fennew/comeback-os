@@ -7,10 +7,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, ListTodo, Wrench, Bot, Paperclip, X, FileText, Image as ImageIcon } from "lucide-react";
+import { Send, ListTodo, Wrench, Bot, Paperclip, X, FileText, Image as ImageIcon, ChevronDown } from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useClientContext } from "@/providers/client-context-provider";
+import { AVAILABLE_MODELS } from "@/lib/agents/providers";
 
 interface UploadedFile {
   name: string;
@@ -41,6 +42,7 @@ export default function AgentPage() {
   const [streamingContent, setStreamingContent] = useState("");
   const [attachedFiles, setAttachedFiles] = useState<UploadedFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [selectedModel, setSelectedModel] = useState(agent?.defaultModel || "grok-3-mini-fast");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -143,6 +145,7 @@ export default function AgentPage() {
           message: messageText,
           clientId: activeClient?.id || null,
           conversationId,
+          model: selectedModel,
         }),
       });
 
@@ -283,6 +286,22 @@ export default function AgentPage() {
           {activeClient && (
             <Badge variant="outline">{activeClient.name}</Badge>
           )}
+          <select
+            value={selectedModel}
+            onChange={(e) => setSelectedModel(e.target.value)}
+            className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+          >
+            <optgroup label="xAI (Grok)">
+              {AVAILABLE_MODELS.xai.map((m) => (
+                <option key={m.model} value={m.model}>{m.label}</option>
+              ))}
+            </optgroup>
+            <optgroup label="Anthropic (Claude)">
+              {AVAILABLE_MODELS.anthropic.map((m) => (
+                <option key={m.model} value={m.model}>{m.label}</option>
+              ))}
+            </optgroup>
+          </select>
           <Button variant="outline" size="sm" asChild>
             <Link href={`/agents/${slug}/tasks`}>
               <ListTodo className="mr-2 h-4 w-4" />
