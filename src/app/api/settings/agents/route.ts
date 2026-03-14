@@ -31,25 +31,26 @@ export async function PUT(request: NextRequest) {
   if (!org) return NextResponse.json({ error: "No organization" }, { status: 500 });
 
   const body = await request.json();
-  const { slug, model } = body;
+  const { slug, model, system_prompt } = body;
 
-  if (!slug || !model) {
-    return NextResponse.json({ error: "Missing slug or model" }, { status: 400 });
+  if (!slug) {
+    return NextResponse.json({ error: "Missing slug" }, { status: 400 });
   }
 
   const adminDb = createAdminClient();
 
+  // Build upsert data
+  const upsertData: Record<string, unknown> = {
+    organization_id: org.organizationId,
+    slug,
+  };
+  if (model) upsertData.model = model;
+  if (system_prompt !== undefined) upsertData.system_prompt = system_prompt;
+
   // Upsert agent config
   const { error } = await adminDb
     .from("agent_configs")
-    .upsert(
-      {
-        organization_id: org.organizationId,
-        slug,
-        model,
-      },
-      { onConflict: "organization_id,slug" }
-    );
+    .upsert(upsertData, { onConflict: "organization_id,slug" });
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

@@ -7,11 +7,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, ListTodo, Wrench, Bot, Paperclip, X, FileText, Image as ImageIcon, ChevronDown } from "lucide-react";
+import { Send, ListTodo, Wrench, Bot, Paperclip, X, FileText, Image as ImageIcon, Settings2, Save, Loader2 } from "lucide-react";
+import { Textarea as TextareaBase } from "@/components/ui/textarea";
 import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useClientContext } from "@/providers/client-context-provider";
 import { AVAILABLE_MODELS } from "@/lib/agents/providers";
+import { getAgentPrompt } from "@/lib/agents/prompts";
 
 interface UploadedFile {
   name: string;
@@ -43,6 +45,10 @@ export default function AgentPage() {
   const [attachedFiles, setAttachedFiles] = useState<UploadedFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [selectedModel, setSelectedModel] = useState(agent?.defaultModel || "grok-3-mini-fast");
+  const [showInstructions, setShowInstructions] = useState(false);
+  const [instructions, setInstructions] = useState("");
+  const [savingInstructions, setSavingInstructions] = useState(false);
+  const [instructionsSaved, setInstructionsSaved] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -55,6 +61,39 @@ export default function AgentPage() {
   useEffect(() => {
     scrollToBottom();
   }, [messages, streamingContent, scrollToBottom]);
+
+  // Load custom instructions when panel opens
+  useEffect(() => {
+    if (showInstructions && slug) {
+      // First load the default prompt
+      setInstructions(getAgentPrompt(slug));
+      // Then check for custom override from API
+      fetch("/api/settings/agents")
+        .then((r) => r.json())
+        .then((configs: Array<{ slug: string; model: string; system_prompt?: string }>) => {
+          const config = configs.find((c: { slug: string }) => c.slug === slug);
+          if (config?.system_prompt) {
+            setInstructions(config.system_prompt);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [showInstructions, slug]);
+
+  async function saveInstructions() {
+    setSavingInstructions(true);
+    try {
+      await fetch("/api/settings/agents", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug, model: selectedModel, system_prompt: instructions }),
+      });
+      setInstructionsSaved(true);
+      setTimeout(() => setInstructionsSaved(false), 2000);
+    } finally {
+      setSavingInstructions(false);
+    }
+  }
 
   // Reset conversation when agent or client changes
   useEffect(() => {
@@ -302,6 +341,14 @@ export default function AgentPage() {
               ))}
             </optgroup>
           </select>
+          <Button
+            variant={showInstructions ? "default" : "outline"}
+            size="sm"
+            onClick={() => setShowInstructions(!showInstructions)}
+          >
+            <Settings2 className="mr-2 h-4 w-4" />
+            Instructions
+          </Button>
           <Button variant="outline" size="sm" asChild>
             <Link href={`/agents/${slug}/tasks`}>
               <ListTodo className="mr-2 h-4 w-4" />
@@ -310,6 +357,34 @@ export default function AgentPage() {
           </Button>
         </div>
       </div>
+
+      {/* Instructions panel */}
+      {showInstructions && (
+        <div className="border-b border-border py-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold">Agent Instructions</h3>
+              <p className="text-xs text-muted-foreground">Edit the system prompt that defines how this agent behaves</p>
+            </div>
+            <div className="flex items-center gap-2">
+              {instructionsSaved && <span className="text-xs text-green-500">Saved!</span>}
+              <Button size="sm" onClick={saveInstructions} disabled={savingInstructions}>
+                {savingInstructions ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : <Save className="mr-2 h-3 w-3" />}
+                Save
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => { setInstructions(getAgentPrompt(slug)); }}>
+                Reset to default
+              </Button>
+            </div>
+          </div>
+          <textarea
+            value={instructions}
+            onChange={(e) => setInstructions(e.target.value)}
+            className="w-full rounded-md border border-border bg-background px-3 py-2 text-xs font-mono min-h-[200px] max-h-[400px] resize-y"
+            placeholder="System prompt for this agent..."
+          />
+        </div>
+      )}
 
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto py-4" ref={scrollRef}>
