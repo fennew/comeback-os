@@ -1,7 +1,7 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { DollarSign, Clock, FileText } from "lucide-react";
+import { DollarSign, Clock, FileText, Inbox } from "lucide-react";
 import Link from "next/link";
 
 export default function OperationsPage() {
@@ -12,7 +12,7 @@ export default function OperationsPage() {
         <p className="text-muted-foreground">Agency performance and management</p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Link href="/operations/revenue">
           <Card className="cursor-pointer transition-colors hover:bg-accent/50">
             <CardHeader className="flex flex-row items-center gap-3">
@@ -31,6 +31,17 @@ export default function OperationsPage() {
               <div>
                 <CardTitle className="text-base">Time Tracking</CardTitle>
                 <p className="text-sm text-muted-foreground">Agent work hours per client</p>
+              </div>
+            </CardHeader>
+          </Card>
+        </Link>
+        <Link href="/operations/results">
+          <Card className="cursor-pointer transition-colors hover:bg-accent/50">
+            <CardHeader className="flex flex-row items-center gap-3">
+              <Inbox className="h-8 w-8 text-amber-500" />
+              <div>
+                <CardTitle className="text-base">Results</CardTitle>
+                <p className="text-sm text-muted-foreground">Agent handoffs and task output</p>
               </div>
             </CardHeader>
           </Card>

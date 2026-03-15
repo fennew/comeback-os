@@ -93,17 +93,18 @@ export async function* executeAgent(
 
   // Resolve model: per-chat override > DB config > registry default
   const model = options.modelOverride || agentConfig?.model || agent.defaultModel;
-  const maxTokens = agentConfig?.max_tokens || 4096;
+  const maxTokens = agentConfig?.max_tokens || 2048;
 
   // Get tool definitions
   const tools = getToolDefinitions(agent.tools);
 
-  // Save user message to DB
+  // Save user message to DB + update conversation timestamp
   await supabase.from("messages").insert({
     conversation_id: context.conversationId,
     role: "user",
     content: userMessage,
   });
+  await supabase.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", context.conversationId);
 
   // Build messages array
   const messages: Array<{ role: string; content: string; tool_calls?: unknown[]; tool_call_id?: string }> = [];
@@ -130,35 +131,54 @@ export async function* executeAgent(
 
   // Stream loop with tool calling
   let continueLoop = true;
-  while (continueLoop) {
+  let loopCount = 0;
+  const maxLoops = 10; // Prevent infinite tool-call loops
+
+  while (continueLoop && loopCount < maxLoops) {
     continueLoop = false;
+    loopCount++;
 
     let fullText = "";
     let toolCalls: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
 
-    for await (const event of streamChat({
-      model,
-      systemPrompt,
-      messages,
-      tools,
-      maxTokens,
-    })) {
-      if (event.type === "text" && event.text) {
-        yield { type: "text", content: event.text };
+    try {
+      for await (const event of streamChat({
+        model,
+        systemPrompt,
+        messages,
+        tools,
+        maxTokens,
+      })) {
+        if (event.type === "text" && event.text) {
+          yield { type: "text", content: event.text };
+        }
+        if (event.type === "tool_calls_done") {
+          fullText = event.fullText || "";
+          toolCalls = event.toolCalls || [];
+        }
       }
-      if (event.type === "tool_calls_done") {
-        fullText = event.fullText || "";
-        toolCalls = event.toolCalls || [];
-      }
+    } catch (streamError: unknown) {
+      const errMsg = streamError instanceof Error ? streamError.message : String(streamError);
+      // Save error as assistant message so it persists in conversation
+      await supabase.from("messages").insert({
+        conversation_id: context.conversationId,
+        role: "assistant",
+        content: `Error: ${errMsg}`,
+      });
+      yield { type: "error", error: errMsg };
+      yield { type: "done" };
+      return;
     }
 
     // Save assistant message
-    await supabase.from("messages").insert({
-      conversation_id: context.conversationId,
-      role: "assistant",
-      content: fullText || null,
-      tool_calls: toolCalls.length > 0 ? toolCalls : null,
-    });
+    if (fullText || toolCalls.length > 0) {
+      await supabase.from("messages").insert({
+        conversation_id: context.conversationId,
+        role: "assistant",
+        content: fullText || null,
+        tool_calls: toolCalls.length > 0 ? toolCalls : null,
+      });
+    }
 
     // Tool call handling
     if (toolCalls.length > 0) {

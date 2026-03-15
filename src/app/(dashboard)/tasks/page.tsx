@@ -156,6 +156,13 @@ export default function TasksPage() {
                             {new Date(task.created_at).toLocaleDateString()}
                           </span>
                         </div>
+                        {/* Result preview for review/completed tasks */}
+                        {task.result && (col.key === "review" || col.key === "completed") && (
+                          <div className="rounded bg-muted/50 p-2 text-xs text-muted-foreground line-clamp-3 mt-1">
+                            {task.result.slice(0, 200)}
+                            {task.result.length > 200 && "…"}
+                          </div>
+                        )}
                         {col.key !== "completed" && (
                           <div className="flex gap-1 pt-1">
                             {col.key === "pending" && (

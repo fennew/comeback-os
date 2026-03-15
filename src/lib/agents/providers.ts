@@ -41,10 +41,12 @@ export const AVAILABLE_MODELS: Record<string, ProviderConfig[]> = {
     { provider: "google", model: "google/gemini-2.5-pro-preview", label: "Gemini 2.5 Pro" },
     { provider: "google", model: "google/gemini-2.5-flash-preview", label: "Gemini 2.5 Flash" },
     { provider: "google", model: "google/gemini-2.0-flash-001", label: "Gemini 2.0 Flash" },
+    { provider: "google", model: "google/gemini-2.0-flash-exp:free", label: "Gemini 2.0 Flash (Free)" },
   ],
   meta: [
     { provider: "meta", model: "meta-llama/llama-4-maverick", label: "Llama 4 Maverick" },
     { provider: "meta", model: "meta-llama/llama-4-scout", label: "Llama 4 Scout" },
+    { provider: "meta", model: "meta-llama/llama-3.3-70b-instruct:free", label: "Llama 3.3 70B (Free)" },
   ],
 };
 

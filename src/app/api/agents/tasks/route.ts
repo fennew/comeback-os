@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase/server";
+import { executeTaskDirect } from "@/lib/agents/direct-executors";
 
 export async function GET(request: NextRequest) {
   const supabase = await createServerClient();
@@ -67,6 +68,15 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Fire-and-forget: execute task in background
+  executeTaskDirect({
+    taskId: data.id,
+    organizationId: membership.organization_id,
+    clientId: client_id || null,
+    agentSlug: agent_slug,
+  }).catch((err) => console.error("[tasks API] Background execution failed:", err));
+
   return NextResponse.json(data, { status: 201 });
 }
 

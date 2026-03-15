@@ -6,9 +6,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, ListTodo, Wrench, Bot, Paperclip, X, FileText, Image as ImageIcon, Settings2, Save, Loader2 } from "lucide-react";
-import { Textarea as TextareaBase } from "@/components/ui/textarea";
+import { Send, ListTodo, Wrench, Bot, Paperclip, X, FileText, Image as ImageIcon, Settings2, Save, Loader2, Plus } from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useClientContext } from "@/providers/client-context-provider";
@@ -32,6 +30,16 @@ interface Message {
   timestamp: Date;
 }
 
+interface Conversation {
+  id: string;
+  title: string;
+  agent_slug: string;
+  client_id: string | null;
+  preview: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export default function AgentPage() {
   const params = useParams();
   const slug = params.agentSlug as string;
@@ -49,6 +57,8 @@ export default function AgentPage() {
   const [instructions, setInstructions] = useState("");
   const [savingInstructions, setSavingInstructions] = useState(false);
   const [instructionsSaved, setInstructionsSaved] = useState(false);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -62,12 +72,80 @@ export default function AgentPage() {
     scrollToBottom();
   }, [messages, streamingContent, scrollToBottom]);
 
+  // Load messages for a specific conversation
+  const loadMessages = useCallback(async (convId: string) => {
+    setConversationId(convId);
+    try {
+      const res = await fetch(`/api/agents/conversations/${convId}/messages`);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      // Transform DB messages to UI format (skip tool role messages)
+      const uiMessages: Message[] = [];
+      for (const msg of data) {
+        if (msg.role === "tool") continue;
+        if (msg.role === "user" || msg.role === "assistant") {
+          uiMessages.push({
+            id: msg.id,
+            role: msg.role,
+            content: msg.content || "",
+            toolCalls: msg.tool_calls || undefined,
+            timestamp: new Date(msg.created_at),
+          });
+        }
+      }
+      setMessages(uiMessages);
+      setStreamingContent("");
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Load conversations list when agent or client changes
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingHistory(true);
+    // Reset state when switching agents
+    setMessages([]);
+    setConversationId(null);
+    setStreamingContent("");
+
+    async function loadConversations() {
+      try {
+        const qp = new URLSearchParams({ agent_slug: slug });
+        if (activeClient?.id) qp.set("client_id", activeClient.id);
+        const res = await fetch(`/api/agents/conversations?${qp}`);
+        if (!res.ok || cancelled) return;
+        const data: Conversation[] = await res.json();
+        if (cancelled) return;
+        setConversations(data);
+
+        // Auto-select most recent conversation and load its messages
+        if (data.length > 0) {
+          await loadMessages(data[0].id);
+        }
+      } catch {
+        // ignore
+      } finally {
+        if (!cancelled) setLoadingHistory(false);
+      }
+    }
+
+    loadConversations();
+    return () => { cancelled = true; };
+  }, [slug, activeClient?.id, loadMessages]);
+
+  function startNewConversation() {
+    setMessages([]);
+    setConversationId(null);
+    setStreamingContent("");
+    setInput("");
+  }
+
   // Load custom instructions when panel opens
   useEffect(() => {
     if (showInstructions && slug) {
-      // First load the default prompt
       setInstructions(getAgentPrompt(slug));
-      // Then check for custom override from API
       fetch("/api/settings/agents")
         .then((r) => r.json())
         .then((configs: Array<{ slug: string; model: string; system_prompt?: string }>) => {
@@ -94,13 +172,6 @@ export default function AgentPage() {
       setSavingInstructions(false);
     }
   }
-
-  // Reset conversation when agent or client changes
-  useEffect(() => {
-    setMessages([]);
-    setConversationId(null);
-    setStreamingContent("");
-  }, [slug, activeClient?.id]);
 
   if (!agent) {
     return (
@@ -147,7 +218,6 @@ export default function AgentPage() {
   async function handleSend() {
     if ((!input.trim() && attachedFiles.length === 0) || isLoading) return;
 
-    // Build message with file context
     let messageContent = input.trim();
     const currentFiles = [...attachedFiles];
 
@@ -155,9 +225,7 @@ export default function AgentPage() {
       const fileList = currentFiles
         .map((f) => `[Attached file: ${f.name} (${f.type}, ${(f.size / 1024).toFixed(1)}KB) - ${f.url}]`)
         .join("\n");
-      messageContent = messageContent
-        ? `${messageContent}\n\n${fileList}`
-        : fileList;
+      messageContent = messageContent ? `${messageContent}\n\n${fileList}` : fileList;
     }
 
     const userMessage: Message = {
@@ -218,6 +286,19 @@ export default function AgentPage() {
             switch (event.type) {
               case "conversation_id":
                 setConversationId(event.id);
+                // Add to conversations list if new
+                setConversations((prev) => {
+                  if (prev.find((c) => c.id === event.id)) return prev;
+                  return [{
+                    id: event.id,
+                    title: messageText.slice(0, 100),
+                    agent_slug: slug,
+                    client_id: activeClient?.id || null,
+                    preview: messageText.slice(0, 100),
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                  }, ...prev];
+                });
                 break;
 
               case "text":
@@ -231,8 +312,6 @@ export default function AgentPage() {
 
               case "tool_result":
                 toolResults.push(event.tool_result);
-                // When a tool result comes in, save current text as a message
-                // and start fresh for the next response
                 if (accumulatedText) {
                   setMessages((prev) => [
                     ...prev,
@@ -251,7 +330,6 @@ export default function AgentPage() {
                 break;
 
               case "done":
-                // Save final accumulated text
                 if (accumulatedText) {
                   setMessages((prev) => [
                     ...prev,
@@ -306,6 +384,20 @@ export default function AgentPage() {
       e.preventDefault();
       handleSend();
     }
+  }
+
+  function formatDate(dateStr: string) {
+    const d = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now.getTime() - d.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    if (diffMins < 1) return "now";
+    if (diffMins < 60) return `${diffMins}m`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours}h`;
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays < 7) return `${diffDays}d`;
+    return d.toLocaleDateString("nl-NL", { day: "numeric", month: "short" });
   }
 
   return (
@@ -383,154 +475,182 @@ export default function AgentPage() {
         </div>
       )}
 
-      {/* Messages area */}
-      <div className="flex-1 overflow-y-auto py-4" ref={scrollRef}>
-        {messages.length === 0 && !streamingContent ? (
-          <div className="flex h-full items-center justify-center">
-            <div className="text-center max-w-md">
-              <div className={cn("mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl", agent.color)}>
-                <agent.icon className="h-8 w-8" />
-              </div>
-              <h2 className="text-lg font-semibold mb-2">Chat with {agent.shortName}</h2>
-              <p className="text-sm text-muted-foreground">
-                {agent.description}. Start a conversation or assign a task.
-              </p>
-            </div>
+      {/* Main chat area with conversation sidebar */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Conversation list sidebar */}
+        <div className="w-56 shrink-0 border-r border-border flex flex-col">
+          <div className="p-2 border-b border-border">
+            <Button variant="outline" size="sm" className="w-full justify-start" onClick={startNewConversation}>
+              <Plus className="mr-2 h-3.5 w-3.5" />
+              New Chat
+            </Button>
           </div>
-        ) : (
-          <div className="space-y-4 px-1">
-            {messages.map((msg) => (
-              <div key={msg.id}>
-                {/* Tool usage indicator */}
-                {msg.role === "assistant" && msg.toolCalls && msg.toolCalls.length > 0 && (
-                  <div className="flex justify-start mb-2">
-                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/50 rounded-md px-2.5 py-1.5">
-                      <Wrench className="h-3 w-3" />
-                      Used: {msg.toolCalls.map((tc) => tc.name.replace(/_/g, " ")).join(", ")}
-                    </div>
-                  </div>
-                )}
-                <div
+          <div className="flex-1 overflow-y-auto">
+            {loadingHistory ? (
+              <div className="p-3 text-xs text-muted-foreground">Loading...</div>
+            ) : conversations.length === 0 ? (
+              <div className="p-3 text-xs text-muted-foreground">No conversations yet</div>
+            ) : (
+              conversations.map((conv) => (
+                <button
+                  key={conv.id}
+                  onClick={() => loadMessages(conv.id)}
                   className={cn(
-                    "flex",
-                    msg.role === "user" ? "justify-end" : "justify-start"
+                    "w-full text-left px-3 py-2.5 border-b border-border/50 hover:bg-muted/50 transition-colors",
+                    conversationId === conv.id && "bg-muted"
                   )}
                 >
-                  {msg.role === "assistant" && (
+                  <div className="flex items-center justify-between mb-0.5">
+                    <span className="text-xs font-medium truncate flex-1">{conv.title}</span>
+                    <span className="text-[10px] text-muted-foreground ml-2 shrink-0">{formatDate(conv.updated_at)}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground truncate">{conv.preview}</p>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Messages area */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex-1 overflow-y-auto py-4 px-4" ref={scrollRef}>
+            {messages.length === 0 && !streamingContent ? (
+              <div className="flex h-full items-center justify-center">
+                <div className="text-center max-w-md">
+                  <div className={cn("mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl", agent.color)}>
+                    <agent.icon className="h-8 w-8" />
+                  </div>
+                  <h2 className="text-lg font-semibold mb-2">Chat with {agent.shortName}</h2>
+                  <p className="text-sm text-muted-foreground">
+                    {agent.description}. Start a conversation or assign a task.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {messages.map((msg) => (
+                  <div key={msg.id}>
+                    {msg.role === "assistant" && msg.toolCalls && msg.toolCalls.length > 0 && (
+                      <div className="flex justify-start mb-2">
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/50 rounded-md px-2.5 py-1.5">
+                          <Wrench className="h-3 w-3" />
+                          Used: {msg.toolCalls.map((tc) => tc.name.replace(/_/g, " ")).join(", ")}
+                        </div>
+                      </div>
+                    )}
+                    <div className={cn("flex", msg.role === "user" ? "justify-end" : "justify-start")}>
+                      {msg.role === "assistant" && (
+                        <div className={cn("mr-2 mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md", agent.color)}>
+                          <Bot className="h-4 w-4" />
+                        </div>
+                      )}
+                      <div
+                        className={cn(
+                          "max-w-[80%] rounded-lg px-4 py-2.5 text-sm",
+                          msg.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted"
+                        )}
+                      >
+                        <p className="whitespace-pre-wrap">{msg.content}</p>
+                        {msg.files && msg.files.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {msg.files.map((f, i) => {
+                              const Icon = getFileIcon(f.type);
+                              return (
+                                <span key={i} className="inline-flex items-center gap-1 rounded bg-black/10 px-2 py-0.5 text-xs">
+                                  <Icon className="h-3 w-3" />
+                                  {f.name}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+                {streamingContent && (
+                  <div className="flex justify-start">
                     <div className={cn("mr-2 mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md", agent.color)}>
                       <Bot className="h-4 w-4" />
                     </div>
-                  )}
-                  <div
-                    className={cn(
-                      "max-w-[80%] rounded-lg px-4 py-2.5 text-sm",
-                      msg.role === "user"
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted"
-                    )}
-                  >
-                    <p className="whitespace-pre-wrap">{msg.content}</p>
-                    {msg.files && msg.files.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {msg.files.map((f, i) => {
-                          const Icon = getFileIcon(f.type);
-                          return (
-                            <span key={i} className="inline-flex items-center gap-1 rounded bg-black/10 px-2 py-0.5 text-xs">
-                              <Icon className="h-3 w-3" />
-                              {f.name}
-                            </span>
-                          );
-                        })}
+                    <div className="max-w-[80%] rounded-lg px-4 py-2.5 text-sm bg-muted">
+                      <p className="whitespace-pre-wrap">{streamingContent}</p>
+                    </div>
+                  </div>
+                )}
+
+                {isLoading && !streamingContent && (
+                  <div className="flex justify-start">
+                    <div className={cn("mr-2 mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md", agent.color)}>
+                      <Bot className="h-4 w-4" />
+                    </div>
+                    <div className="bg-muted rounded-lg px-4 py-2.5">
+                      <div className="flex gap-1">
+                        <span className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce" style={{ animationDelay: "0ms" }} />
+                        <span className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce" style={{ animationDelay: "150ms" }} />
+                        <span className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce" style={{ animationDelay: "300ms" }} />
                       </div>
-                    )}
+                    </div>
                   </div>
-                </div>
-              </div>
-            ))}
-
-            {/* Streaming content */}
-            {streamingContent && (
-              <div className="flex justify-start">
-                <div className={cn("mr-2 mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md", agent.color)}>
-                  <Bot className="h-4 w-4" />
-                </div>
-                <div className="max-w-[80%] rounded-lg px-4 py-2.5 text-sm bg-muted">
-                  <p className="whitespace-pre-wrap">{streamingContent}</p>
-                </div>
-              </div>
-            )}
-
-            {/* Loading indicator */}
-            {isLoading && !streamingContent && (
-              <div className="flex justify-start">
-                <div className={cn("mr-2 mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md", agent.color)}>
-                  <Bot className="h-4 w-4" />
-                </div>
-                <div className="bg-muted rounded-lg px-4 py-2.5">
-                  <div className="flex gap-1">
-                    <span className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce" style={{ animationDelay: "0ms" }} />
-                    <span className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce" style={{ animationDelay: "150ms" }} />
-                    <span className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce" style={{ animationDelay: "300ms" }} />
-                  </div>
-                </div>
+                )}
               </div>
             )}
           </div>
-        )}
-      </div>
 
-      {/* Input area */}
-      <div className="border-t border-border pt-4">
-        {/* Attached files preview */}
-        {attachedFiles.length > 0 && (
-          <div className="mb-2 flex flex-wrap gap-2">
-            {attachedFiles.map((f, i) => {
-              const Icon = getFileIcon(f.type);
-              return (
-                <div key={i} className="flex items-center gap-1.5 rounded-md bg-muted px-2.5 py-1.5 text-xs">
-                  <Icon className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="max-w-[150px] truncate">{f.name}</span>
-                  <button onClick={() => removeFile(i)} className="ml-1 rounded-full hover:bg-background p-0.5">
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              );
-            })}
+          {/* Input area */}
+          <div className="border-t border-border p-4">
+            {attachedFiles.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-2">
+                {attachedFiles.map((f, i) => {
+                  const Icon = getFileIcon(f.type);
+                  return (
+                    <div key={i} className="flex items-center gap-1.5 rounded-md bg-muted px-2.5 py-1.5 text-xs">
+                      <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span className="max-w-[150px] truncate">{f.name}</span>
+                      <button onClick={() => removeFile(i)} className="ml-1 rounded-full hover:bg-background p-0.5">
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                onChange={handleFileSelect}
+                className="hidden"
+                accept=".pdf,.doc,.docx,.txt,.csv,.xlsx,.xls,.png,.jpg,.jpeg,.gif,.webp,.json,.html,.css,.md"
+              />
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+                title="Attach file"
+              >
+                <Paperclip className="h-4 w-4" />
+              </Button>
+              <Textarea
+                placeholder={`Message ${agent.shortName}...`}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                rows={1}
+                className="min-h-[44px] max-h-[120px] resize-none"
+              />
+              <Button
+                onClick={handleSend}
+                disabled={(!input.trim() && attachedFiles.length === 0) || isLoading}
+                size="icon"
+              >
+                <Send className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
-        )}
-        <div className="flex gap-2">
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            onChange={handleFileSelect}
-            className="hidden"
-            accept=".pdf,.doc,.docx,.txt,.csv,.xlsx,.xls,.png,.jpg,.jpeg,.gif,.webp,.json,.html,.css,.md"
-          />
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading}
-            title="Attach file"
-          >
-            <Paperclip className="h-4 w-4" />
-          </Button>
-          <Textarea
-            placeholder={`Message ${agent.shortName}...`}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            rows={1}
-            className="min-h-[44px] max-h-[120px] resize-none"
-          />
-          <Button
-            onClick={handleSend}
-            disabled={(!input.trim() && attachedFiles.length === 0) || isLoading}
-            size="icon"
-          >
-            <Send className="h-4 w-4" />
-          </Button>
         </div>
       </div>
     </div>

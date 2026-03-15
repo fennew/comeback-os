@@ -1,6 +1,7 @@
 import { inngest } from "../client";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { executeAgent } from "@/lib/agents/engine";
+import { sendPushToOrganization } from "@/lib/push/send-notification";
 
 export const processHandoff = inngest.createFunction(
   { id: "process-agent-handoff", name: "Process Agent Handoff" },
@@ -87,10 +88,17 @@ Please process this handoff and complete the requested work.`;
           type: "handoff_complete",
           title: `Handoff completed by ${toAgentSlug.replace(/-/g, " ")}`,
           body: result.slice(0, 200),
-          link: `/agents/${toAgentSlug}`,
+          link: `/operations/results`,
         });
       }
     }
+
+    // Send push notification
+    await sendPushToOrganization(organizationId, {
+      title: `Handoff completed`,
+      body: `${toAgentSlug.replace(/-/g, " ")} finished: ${result.slice(0, 100)}`,
+      url: "/operations/results",
+    });
 
     return { success: true, handoffId };
   }

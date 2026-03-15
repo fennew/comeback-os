@@ -1,6 +1,7 @@
 import { inngest } from "../client";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { executeAgent } from "@/lib/agents/engine";
+import { sendPushToOrganization } from "@/lib/push/send-notification";
 
 export const executeTask = inngest.createFunction(
   { id: "execute-agent-task", name: "Execute Agent Task" },
@@ -114,6 +115,13 @@ Please complete this task and provide the result.`;
         });
       }
     }
+
+    // Send push notification
+    await sendPushToOrganization(organizationId, {
+      title: `Task ready for review`,
+      body: `${agentSlug.replace(/-/g, " ")} completed: ${task.title}`,
+      url: "/tasks",
+    });
 
     return { success: true, taskId, durationMs };
   }

@@ -1,5 +1,6 @@
 import type { ToolDefinition, ToolResult, AgentContext } from "../types";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { executeTaskDirect, processHandoffDirect } from "../direct-executors";
 
 // ============================================================
 // TOOL DEFINITIONS
@@ -193,7 +194,22 @@ export async function executeTool(
         .single();
 
       if (error) return { success: false, error: error.message };
-      return { success: true, data };
+
+      // Fire-and-forget: execute task in background
+      executeTaskDirect({
+        taskId: data.id,
+        organizationId: context.organizationId,
+        clientId: context.clientId || null,
+        agentSlug: input.agent_slug as string,
+      }).catch((err) => console.error("[create_task] Background execution failed:", err));
+
+      return {
+        success: true,
+        data: {
+          task_id: data.id,
+          message: `Task "${input.title}" created and assigned to ${input.agent_slug}. The agent will start working on it immediately.`,
+        },
+      };
     }
 
     case "update_task": {
@@ -234,12 +250,15 @@ export async function executeTool(
     }
 
     case "send_handoff": {
+      // input.from_agent is set by the engine (engine.ts overrides it)
+      const fromAgent = (input.from_agent as string) || "unknown";
+
       const { data, error } = await supabase
         .from("agent_handoffs")
         .insert({
           organization_id: context.organizationId,
           client_id: context.clientId || null,
-          from_agent_slug: "current", // will be overridden by engine
+          from_agent_slug: fromAgent,
           to_agent_slug: input.to_agent as string,
           context: input.context as string,
           instructions: (input.instructions as string) || null,
@@ -248,12 +267,22 @@ export async function executeTool(
         .single();
 
       if (error) return { success: false, error: error.message };
-      // TODO: Trigger Inngest event for async processing
+
+      // Fire-and-forget: process handoff in background
+      processHandoffDirect({
+        handoffId: data.id,
+        organizationId: context.organizationId,
+        clientId: context.clientId || null,
+        toAgentSlug: input.to_agent as string,
+        context: input.context as string,
+        instructions: (input.instructions as string) || null,
+      }).catch((err) => console.error("[send_handoff] Background execution failed:", err));
+
       return {
         success: true,
         data: {
           handoff_id: data.id,
-          message: `Work handed off to ${input.to_agent}. They will process it and you'll be notified when complete.`,
+          message: `Work handed off to ${input.to_agent}. They will process it asynchronously and you'll be notified when complete.`,
         },
       };
     }

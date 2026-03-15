@@ -2,6 +2,7 @@ import { Sidebar, MobileSidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { ClientContextProvider } from "@/providers/client-context-provider";
 import { SidebarProvider } from "@/providers/sidebar-provider";
+import { PushNotificationProvider } from "@/components/push-notification-provider";
 
 export default function DashboardLayout({
   children,
@@ -11,6 +12,7 @@ export default function DashboardLayout({
   return (
     <ClientContextProvider>
       <SidebarProvider>
+        <PushNotificationProvider>
         <div className="flex h-screen overflow-hidden">
           {/* Desktop sidebar — hidden on mobile */}
           <Sidebar />
@@ -23,6 +25,7 @@ export default function DashboardLayout({
             </main>
           </div>
         </div>
+        </PushNotificationProvider>
       </SidebarProvider>
     </ClientContextProvider>
   );
