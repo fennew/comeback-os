@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Check, Loader2 } from "lucide-react";
 import { getAllAgents } from "@/lib/agents/registry";
-import { AVAILABLE_MODELS, type ProviderName } from "@/lib/agents/providers";
+import { AVAILABLE_MODELS } from "@/lib/agents/providers";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { useState, useEffect } from "react";
@@ -13,6 +13,33 @@ import { useState, useEffect } from "react";
 interface AgentConfig {
   slug: string;
   model: string;
+}
+
+const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: "Anthropic (Claude)",
+  xai: "xAI (Grok)",
+  openai: "OpenAI (GPT)",
+  google: "Google (Gemini)",
+  meta: "Meta (Llama)",
+};
+
+function ModelSelect({ value, onChange, disabled }: { value: string; onChange: (v: string) => void; disabled?: boolean }) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="rounded-md border border-border bg-background px-3 py-1.5 text-sm min-w-[180px]"
+      disabled={disabled}
+    >
+      {Object.entries(AVAILABLE_MODELS).map(([key, models]) => (
+        <optgroup key={key} label={PROVIDER_LABELS[key] || key}>
+          {models.map((m) => (
+            <option key={m.model} value={m.model}>{m.label}</option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
+  );
 }
 
 export default function AgentSettingsPage() {
@@ -61,12 +88,6 @@ export default function AgentSettingsPage() {
     }
   }
 
-  const allModels = [
-    ...AVAILABLE_MODELS.anthropic,
-    ...AVAILABLE_MODELS.xai,
-    ...AVAILABLE_MODELS.openai,
-  ];
-
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -91,21 +112,13 @@ export default function AgentSettingsPage() {
                 className="rounded-md border border-border bg-background px-3 py-1.5 text-sm"
               >
                 <option value="">Select model...</option>
-                <optgroup label="xAI (Grok)">
-                  {AVAILABLE_MODELS.xai.map((m) => (
-                    <option key={m.model} value={m.model}>{m.label}</option>
-                  ))}
-                </optgroup>
-                <optgroup label="OpenAI (GPT)">
-                  {AVAILABLE_MODELS.openai.map((m) => (
-                    <option key={m.model} value={m.model}>{m.label}</option>
-                  ))}
-                </optgroup>
-                <optgroup label="Anthropic (Claude)">
-                  {AVAILABLE_MODELS.anthropic.map((m) => (
-                    <option key={m.model} value={m.model}>{m.label}</option>
-                  ))}
-                </optgroup>
+                {Object.entries(AVAILABLE_MODELS).map(([key, models]) => (
+                  <optgroup key={key} label={PROVIDER_LABELS[key] || key}>
+                    {models.map((m) => (
+                      <option key={m.model} value={m.model}>{m.label}</option>
+                    ))}
+                  </optgroup>
+                ))}
               </select>
               <Button size="sm" onClick={applyGlobalModel} disabled={!globalModel}>
                 Apply to all
@@ -135,23 +148,11 @@ export default function AgentSettingsPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <select
+                  <ModelSelect
                     value={currentModel}
-                    onChange={(e) => saveModel(agent.slug, e.target.value)}
-                    className="rounded-md border border-border bg-background px-3 py-1.5 text-sm min-w-[180px]"
+                    onChange={(v) => saveModel(agent.slug, v)}
                     disabled={isSaving}
-                  >
-                    <optgroup label="Anthropic (Claude)">
-                      {AVAILABLE_MODELS.anthropic.map((m) => (
-                        <option key={m.model} value={m.model}>{m.label}</option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="xAI (Grok)">
-                      {AVAILABLE_MODELS.xai.map((m) => (
-                        <option key={m.model} value={m.model}>{m.label}</option>
-                      ))}
-                    </optgroup>
-                  </select>
+                  />
                   {isSaving && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
                   {isSaved && <Check className="h-4 w-4 text-green-500" />}
                   <Badge variant="outline">{agent.tools.length} tools</Badge>
@@ -165,14 +166,12 @@ export default function AgentSettingsPage() {
       {/* API key info */}
       <Card>
         <CardContent className="py-4">
-          <p className="text-sm font-medium mb-1">API Keys</p>
+          <p className="text-sm font-medium mb-1">API Configuration</p>
           <p className="text-xs text-muted-foreground">
-            Set your API keys as environment variables on Vercel:
+            All models are powered through OpenRouter — one API key for everything.
           </p>
           <ul className="text-xs text-muted-foreground mt-2 space-y-1">
-            <li><code className="bg-muted px-1.5 py-0.5 rounded">ANTHROPIC_API_KEY</code> — for Claude models</li>
-            <li><code className="bg-muted px-1.5 py-0.5 rounded">XAI_API_KEY</code> — for Grok models</li>
-            <li><code className="bg-muted px-1.5 py-0.5 rounded">OPENAI_API_KEY</code> — for GPT models</li>
+            <li><code className="bg-muted px-1.5 py-0.5 rounded">OPENROUTER_API_KEY</code> — powers all AI models (Claude, GPT, Grok, Gemini, Llama)</li>
           </ul>
         </CardContent>
       </Card>

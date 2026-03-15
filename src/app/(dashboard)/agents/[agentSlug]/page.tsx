@@ -44,7 +44,7 @@ export default function AgentPage() {
   const [streamingContent, setStreamingContent] = useState("");
   const [attachedFiles, setAttachedFiles] = useState<UploadedFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
-  const [selectedModel, setSelectedModel] = useState(agent?.defaultModel || "grok-3-mini-fast");
+  const [selectedModel, setSelectedModel] = useState(agent?.defaultModel || "anthropic/claude-sonnet-4");
   const [showInstructions, setShowInstructions] = useState(false);
   const [instructions, setInstructions] = useState("");
   const [savingInstructions, setSavingInstructions] = useState(false);
@@ -330,21 +330,13 @@ export default function AgentPage() {
             onChange={(e) => setSelectedModel(e.target.value)}
             className="rounded-md border border-border bg-background px-2 py-1 text-xs"
           >
-            <optgroup label="xAI (Grok)">
-              {AVAILABLE_MODELS.xai.map((m) => (
-                <option key={m.model} value={m.model}>{m.label}</option>
-              ))}
-            </optgroup>
-            <optgroup label="OpenAI (GPT)">
-              {AVAILABLE_MODELS.openai.map((m) => (
-                <option key={m.model} value={m.model}>{m.label}</option>
-              ))}
-            </optgroup>
-            <optgroup label="Anthropic (Claude)">
-              {AVAILABLE_MODELS.anthropic.map((m) => (
-                <option key={m.model} value={m.model}>{m.label}</option>
-              ))}
-            </optgroup>
+            {Object.entries(AVAILABLE_MODELS).map(([key, models]) => (
+              <optgroup key={key} label={key === "xai" ? "xAI (Grok)" : key === "openai" ? "OpenAI (GPT)" : key === "anthropic" ? "Anthropic (Claude)" : key === "google" ? "Google (Gemini)" : key === "meta" ? "Meta (Llama)" : key}>
+                {models.map((m) => (
+                  <option key={m.model} value={m.model}>{m.label}</option>
+                ))}
+              </optgroup>
+            ))}
           </select>
           <Button
             variant={showInstructions ? "default" : "outline"}
