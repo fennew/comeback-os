@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
     .from("conversations")
     .select("id, title, agent_slug, client_id, status, created_at, updated_at")
     .eq("organization_id", org.organizationId)
-    .eq("status", "active")
+    .not("status", "eq", "archived")
     .order("updated_at", { ascending: false })
     .limit(50);
 

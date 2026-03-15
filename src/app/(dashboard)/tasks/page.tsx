@@ -41,12 +41,30 @@ export default function TasksPage() {
   const [loading, setLoading] = useState(true);
   const { activeClient } = useClientContext();
 
+  const hasActiveTasks = tasks.some((t) => t.status === "pending" || t.status === "in_progress");
+
   useEffect(() => {
     fetchTasks();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeClient?.id]);
+
+  // Auto-refresh every 5 seconds when tasks are pending/in-progress
+  useEffect(() => {
+    if (!hasActiveTasks) return;
+    const interval = setInterval(() => {
+      fetchTasksSilent();
+    }, 5000);
+    return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasActiveTasks, activeClient?.id]);
 
   async function fetchTasks() {
     setLoading(true);
+    await fetchTasksSilent();
+    setLoading(false);
+  }
+
+  async function fetchTasksSilent() {
     const params = new URLSearchParams();
     if (activeClient?.id) params.set("client_id", activeClient.id);
 
@@ -55,7 +73,6 @@ export default function TasksPage() {
       const data = await res.json();
       setTasks(data);
     }
-    setLoading(false);
   }
 
   async function updateTaskStatus(taskId: string, newStatus: string) {
@@ -106,11 +123,22 @@ export default function TasksPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Task Board</h1>
-        <p className="text-muted-foreground">
-          {activeClient ? `Tasks for ${activeClient.name}` : "All agency tasks"}
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Task Board</h1>
+          <p className="text-muted-foreground">
+            {activeClient ? `Tasks for ${activeClient.name}` : "All agency tasks"}
+          </p>
+        </div>
+        {hasActiveTasks && (
+          <div className="flex items-center gap-1.5 text-xs text-blue-500 font-medium">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
+            </span>
+            Live — agents working
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">

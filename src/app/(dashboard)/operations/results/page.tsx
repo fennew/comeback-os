@@ -71,14 +71,35 @@ export default function ResultsPage() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<FilterTab>("all");
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [lastRefresh, setLastRefresh] = useState(new Date());
   const { activeClient } = useClientContext();
+
+  const hasActiveItems = [...handoffs, ...tasks].some(
+    (item) => "status" in item && (item.status === "pending" || item.status === "processing" || item.status === "in_progress")
+  );
 
   useEffect(() => {
     fetchResults();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeClient?.id]);
+
+  // Auto-refresh every 5 seconds when there are active items
+  useEffect(() => {
+    if (!hasActiveItems) return;
+    const interval = setInterval(() => {
+      fetchResultsSilent();
+    }, 5000);
+    return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasActiveItems, activeClient?.id]);
 
   async function fetchResults() {
     setLoading(true);
+    await fetchResultsSilent();
+    setLoading(false);
+  }
+
+  async function fetchResultsSilent() {
     const params = new URLSearchParams();
     if (activeClient?.id) params.set("client_id", activeClient.id);
 
@@ -87,8 +108,8 @@ export default function ResultsPage() {
       const data = await res.json();
       setHandoffs(data.handoffs || []);
       setTasks(data.tasks || []);
+      setLastRefresh(new Date());
     }
-    setLoading(false);
   }
 
   function toggleExpand(id: string) {
@@ -139,11 +160,22 @@ export default function ResultsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Results</h1>
-        <p className="text-muted-foreground">
-          {activeClient ? `Agent work for ${activeClient.name}` : "All agent handoffs and task results"}
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Results</h1>
+          <p className="text-muted-foreground">
+            {activeClient ? `Agent work for ${activeClient.name}` : "All agent handoffs and task results"}
+          </p>
+        </div>
+        {hasActiveItems && (
+          <div className="flex items-center gap-1.5 text-xs text-blue-500 font-medium">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
+            </span>
+            Live — refreshing
+          </div>
+        )}
       </div>
 
       {/* Filter tabs */}

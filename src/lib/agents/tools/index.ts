@@ -1,6 +1,10 @@
 import type { ToolDefinition, ToolResult, AgentContext } from "../types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { executeTaskDirect, processHandoffDirect } from "../direct-executors";
+import { inngest } from "@/lib/inngest/client";
+
+// Use Inngest in production (INNGEST_EVENT_KEY set), direct executors in dev
+const USE_INNGEST = !!process.env.INNGEST_EVENT_KEY;
 
 // ============================================================
 // TOOL DEFINITIONS
@@ -195,13 +199,25 @@ export async function executeTool(
 
       if (error) return { success: false, error: error.message };
 
-      // Fire-and-forget: execute task in background
-      executeTaskDirect({
-        taskId: data.id,
-        organizationId: context.organizationId,
-        clientId: context.clientId || null,
-        agentSlug: input.agent_slug as string,
-      }).catch((err) => console.error("[create_task] Background execution failed:", err));
+      // Execute task: Inngest in production, direct executor in dev
+      if (USE_INNGEST) {
+        inngest.send({
+          name: "agent/task.execute",
+          data: {
+            taskId: data.id,
+            organizationId: context.organizationId,
+            clientId: context.clientId || null,
+            agentSlug: input.agent_slug as string,
+          },
+        }).catch((err) => console.error("[create_task] Inngest send failed:", err));
+      } else {
+        executeTaskDirect({
+          taskId: data.id,
+          organizationId: context.organizationId,
+          clientId: context.clientId || null,
+          agentSlug: input.agent_slug as string,
+        }).catch((err) => console.error("[create_task] Direct execution failed:", err));
+      }
 
       return {
         success: true,
@@ -268,15 +284,29 @@ export async function executeTool(
 
       if (error) return { success: false, error: error.message };
 
-      // Fire-and-forget: process handoff in background
-      processHandoffDirect({
-        handoffId: data.id,
-        organizationId: context.organizationId,
-        clientId: context.clientId || null,
-        toAgentSlug: input.to_agent as string,
-        context: input.context as string,
-        instructions: (input.instructions as string) || null,
-      }).catch((err) => console.error("[send_handoff] Background execution failed:", err));
+      // Process handoff: Inngest in production, direct executor in dev
+      if (USE_INNGEST) {
+        inngest.send({
+          name: "agent/handoff.created",
+          data: {
+            handoffId: data.id,
+            organizationId: context.organizationId,
+            clientId: context.clientId || null,
+            toAgentSlug: input.to_agent as string,
+            context: input.context as string,
+            instructions: (input.instructions as string) || null,
+          },
+        }).catch((err) => console.error("[send_handoff] Inngest send failed:", err));
+      } else {
+        processHandoffDirect({
+          handoffId: data.id,
+          organizationId: context.organizationId,
+          clientId: context.clientId || null,
+          toAgentSlug: input.to_agent as string,
+          context: input.context as string,
+          instructions: (input.instructions as string) || null,
+        }).catch((err) => console.error("[send_handoff] Direct execution failed:", err));
+      }
 
       return {
         success: true,

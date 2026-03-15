@@ -55,7 +55,7 @@ export function getAllModels(): ProviderConfig[] {
 }
 
 // Default model for new agents
-export const DEFAULT_MODEL = "anthropic/claude-sonnet-4";
+export const DEFAULT_MODEL = "google/gemini-2.5-flash-preview";
 
 // ── Tool schema conversion ──────────────────────────────────
 interface ToolDef {

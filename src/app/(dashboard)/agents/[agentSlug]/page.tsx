@@ -52,7 +52,7 @@ export default function AgentPage() {
   const [streamingContent, setStreamingContent] = useState("");
   const [attachedFiles, setAttachedFiles] = useState<UploadedFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
-  const [selectedModel, setSelectedModel] = useState(agent?.defaultModel || "anthropic/claude-sonnet-4");
+  const [selectedModel, setSelectedModel] = useState(agent?.defaultModel || "google/gemini-2.5-flash-preview");
   const [showInstructions, setShowInstructions] = useState(false);
   const [instructions, setInstructions] = useState("");
   const [savingInstructions, setSavingInstructions] = useState(false);
